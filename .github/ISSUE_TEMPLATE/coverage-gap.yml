@@ -1,0 +1,45 @@
+name: Coverage Gap
+description: Flag a missing workflow, command, or feature in an existing skill
+labels: ["coverage-gap"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when an existing skill is correct as far as it goes but is missing coverage you actually needed (a workflow, a flag, an edge case, an integration).
+
+  - type: input
+    id: skill
+    attributes:
+      label: Skill
+      description: Which skill is missing coverage?
+      placeholder: "utmapp"
+    validations:
+      required: true
+
+  - type: textarea
+    id: whats-missing
+    attributes:
+      label: What is missing
+      description: Describe the workflow, command, behaviour, or edge case the skill does not cover.
+      placeholder: |
+        utmapp documents `utmctl exec` for QEMU guests but does not show how to send keystrokes to a UEFI prompt before the OS boots. I needed to bypass GRUB selection during install and the skill had no path for this.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Concrete scenario
+      description: A short user-facing prompt or task that exercises this gap. Helps reviewers reproduce.
+      placeholder: |
+        "Boot Ubuntu 24.04 ISO, send 'e' at GRUB to edit kernel cmdline, append `single`, then F10 to boot."
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: Source pointers
+      description: Optional — upstream docs, source files, or writeups that show the right way to handle this.
+    validations:
+      required: false
