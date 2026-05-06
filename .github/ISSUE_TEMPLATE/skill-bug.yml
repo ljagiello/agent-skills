@@ -1,0 +1,76 @@
+name: Skill Bug
+description: Report a factual error, wrong command, broken anchor, or other bug in a skill
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a skill bug. Skills here are graded on **source-grounded accuracy** — if a documented command, AppleScript property, plist key, or enum value disagrees with the upstream tool's source, that is a bug.
+
+        Please cite the upstream source if you can. The most useful bug reports look like: "`utmapp/references/foo.md:123` says `Interface = "sata"`, but `Configuration/QEMUConstant.swift:352-361` shows the enum has no SATA case."
+
+  - type: input
+    id: affected-file
+    attributes:
+      label: Affected file
+      description: Which file (and ideally line range) is wrong?
+      placeholder: "utmapp/references/utmctl.md:104"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bug-type
+    attributes:
+      label: Type of bug
+      options:
+        - Factual error (claim disagrees with upstream source)
+        - Wrong command, flag, or argument syntax
+        - Wrong AppleScript / sdef property name
+        - Wrong on-disk plist key or enum value
+        - Broken anchor / dead link
+        - Misleading description of behaviour (works, but causes confusion)
+        - SKILL.md frontmatter / spec compliance issue
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: claim
+    attributes:
+      label: What the skill currently claims
+      description: Quote the exact passage (or describe the broken link / structural issue).
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: reality
+    attributes:
+      label: What is actually true
+      description: |
+        Describe the correct behaviour. If you can, cite the upstream source file and line range you read.
+      placeholder: |
+        Per Configuration/UTMQemuConfigurationDrive.swift:39-44 the on-disk key is `Interface` (not `InterfaceType`) and there is no `SATA` value in the QEMUDriveInterface enum.
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How you noticed
+      description: Optional — what task were you trying to do, what command did you run, what happened?
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Optional — agent runtime, host OS, tool version that revealed the bug.
+      placeholder: |
+        - Agent: Claude Code 1.x
+        - Host: macOS 15.x
+        - Tool version: UTM 4.6.5
+    validations:
+      required: false

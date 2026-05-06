@@ -1,0 +1,73 @@
+name: New Skill Proposal
+description: Suggest a new skill covering a Mac app, dev tool, or workflow
+labels: ["new-skill"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Skills here teach an agent how to drive a real tool — Mac apps, CLIs, system services, dev workflows. A good proposal has a concrete trigger ("when the user mentions X") and a verifiable upstream source for every claim the skill will make.
+
+        Please skim the [Agent Skills specification](https://agentskills.io/specification) and the [authoring best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices) before opening this — they decide what counts as a coherent unit of work.
+
+  - type: input
+    id: skill-name
+    attributes:
+      label: Proposed skill name
+      description: Lowercase, alphanumeric and hyphens only, ≤64 chars (matches the directory name).
+      placeholder: "tailscale-cli"
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: What it drives
+      description: The app, CLI, API, or workflow the skill teaches the agent to use.
+      placeholder: "Tailscale CLI on macOS — node management, ACL queries, exit-node selection."
+    validations:
+      required: true
+
+  - type: textarea
+    id: triggers
+    attributes:
+      label: Trigger phrases
+      description: User prompts that should activate this skill. Used to draft the `description` field of `SKILL.md`.
+      placeholder: |
+        - "Set up a Tailscale exit node on this Mac"
+        - "Check who is in our tailnet"
+        - "Why is `tailscale ssh` failing?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: |
+        What the skill *will* and *will not* cover. Skills scoped too narrowly conflict with sibling skills; scoped too broadly are hard to activate precisely.
+      placeholder: |
+        IN scope: tailscale CLI invocation, common ACL queries, MagicDNS quirks, troubleshooting userspace networking.
+        OUT of scope: hand-editing tailscaled internals, building Tailscale from source.
+    validations:
+      required: true
+
+  - type: textarea
+    id: sources
+    attributes:
+      label: Upstream sources
+      description: |
+        Where will factual claims trace back to? List the repos, official docs, or specs the skill will cite.
+      placeholder: |
+        - https://github.com/tailscale/tailscale (CLI source, control protocol)
+        - https://tailscale.com/kb (official knowledge base)
+        - `tailscale --help` and `man tailscale`
+    validations:
+      required: true
+
+  - type: textarea
+    id: similar
+    attributes:
+      label: Similar / related skills
+      description: Optional — other skills (here or elsewhere) that overlap. Helps reviewers think about composition.
+    validations:
+      required: false

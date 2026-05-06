@@ -1,0 +1,18 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Issues
+    url: https://github.com/ljagiello/agent-skills/security/advisories/new
+    about: >
+      Report prompt injection in skill content, malicious payloads in example
+      snippets, inaccurate destructive commands, or leaked credentials via
+      GitHub Security Advisories. Do NOT use regular issues for security reports.
+  - name: Agent Skills specification
+    url: https://agentskills.io/specification
+    about: >
+      Reference for SKILL.md frontmatter rules and directory layout. Read this
+      before reporting that a skill "does not validate".
+  - name: Authoring best practices
+    url: https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices
+    about: >
+      Anthropic's published best practices for skill authoring (concision,
+      progressive disclosure, gotchas, third-person descriptions).
