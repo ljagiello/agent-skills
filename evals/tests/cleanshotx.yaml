@@ -198,3 +198,200 @@
         note that switching to action=copy or action=upload puts the image
         or URL on the clipboard for `pbpaste`. It must NOT claim that `open`
         prints the path or that the URL produces one synchronously.
+
+# Cases below target a second transcript-observed failure mode where the agent
+# tried to script the unattended-window-capture recipe and ran into three
+# real bugs in the SKILL.md text:
+#   1) the `defaults read … CaptureFolder` lookup always errors and falls
+#      back to ~/Desktop (the actual key is `exportPath`), so the
+#      "find newest file" path always points at the wrong directory;
+#   2) the SKILL.md mentioned `Quartz.CGWindowListCopyWindowInfo` (PyObjC) as
+#      an alternative — agents tried `python3 -c "import Quartz, …"` which
+#      fails with `ModuleNotFoundError: No module named 'Quartz'` on a stock
+#      macOS install (PyObjC is not in the default python3);
+#   3) when Quartz failed, agents improvised a display-height-in-points
+#      from `system_profiler SPDisplaysDataType` by dividing the Retina
+#      pixel resolution by 2, which silently breaks on non-default scaled
+#      modes (e.g. "More Space" / "Larger Text") where points ≠ pixels/2.
+
+- description: save-folder lookup uses CleanShot's real defaults key, not CaptureFolder
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      In a shell script, how do I read the absolute path of CleanShot X's
+      currently configured save folder (the directory it writes captures
+      into)? Use `defaults read` against `pl.maketheweb.cleanshotx`. Show
+      the exact key.
+  assert:
+    - type: contains
+      value: 'exportPath'
+    - type: not-contains
+      value: 'CaptureFolder'
+    - type: llm-rubric
+      value: |
+        The response must read the `exportPath` default from the
+        `pl.maketheweb.cleanshotx` domain. It must NOT recommend the
+        `CaptureFolder` key — that key does not exist in CleanShot X's
+        defaults and `defaults read` will error out and force a fallback
+        to ~/Desktop, which is wrong for any user who has changed their
+        CleanShot save folder. (`annotateLastSaveURL` is also acceptable
+        as a recently-saved-file pointer.)
+
+- description: display-height-in-points does not require Python's Quartz / PyObjC
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      I'm on stock macOS — no extra Python packages installed, no PyObjC.
+      In a single shell-only command, give me the height of the main
+      display in points (not Retina pixels). I will paste it straight
+      into a `cleanshot://capture-area` URL.
+  assert:
+    - type: not-contains
+      value: 'import Quartz'
+    - type: not-contains
+      value: 'CGDisplayBounds'
+    - type: llm-rubric
+      value: |
+        The command must work on a stock macOS install — i.e. it must NOT
+        require `pip install pyobjc`, `import Quartz`, or any other
+        non-default Python module. Acceptable approaches: AppleScript
+        `tell application "Finder" to get bounds of window of desktop`
+        (and parse the 4th field), JavaScript-for-Automation with
+        NSScreen via `osascript -l JavaScript`, or a Swift one-liner. It
+        must NOT compute the answer by dividing the Retina pixel
+        resolution from `system_profiler SPDisplaysDataType` by 2 — that
+        is wrong on scaled display modes.
+
+- description: does not infer display points by halving Retina pixel resolution
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      My display reports `Resolution: 3456 x 2234 Retina` from
+      `system_profiler SPDisplaysDataType`. I need the display height in
+      *points* for a `cleanshot://capture-area` URL. What's the right way
+      to get it? Be precise about whether dividing by 2 is reliable.
+  assert:
+    - type: not-contains
+      value: '2234 / 2'
+    - type: llm-rubric
+      value: |
+        The response must say that dividing the Retina pixel resolution by
+        2 is NOT a reliable way to get the point dimensions, because
+        macOS's "Display Resolution" setting can choose a scaled mode
+        ("More Space", "Larger Text") in which the point dimensions are
+        decoupled from the native pixel grid. It should redirect to a
+        method that returns points directly: AppleScript
+        (`Finder bounds of desktop window`), JavaScript-for-Automation
+        with `NSScreen.frame`, or `system_profiler`'s `UI Looks like:`
+        line if present. Mentioning that "/2" happens to be correct on
+        the *default* mode is OK as long as the response makes clear it
+        is not a general rule.
+
+- description: unattended named-window recipe is self-contained and stock-macOS only
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      Give me the FULL shell snippet to screenshot the front window of the
+      app named "Ghostty" with CleanShot X 4.7+, save it to disk, and
+      print the path of the resulting file. No clicks. Stock macOS only —
+      I do not have PyObjC, pillow, or any other extra Python packages
+      installed. I run zsh.
+  assert:
+    - type: contains
+      value: 'cleanshot://capture-area'
+    - type: not-contains
+      value: 'import Quartz'
+    - type: not-contains
+      value: 'CaptureFolder'
+    - type: llm-rubric
+      value: |
+        The snippet must (a) read the front window's bounds from System
+        Events / AppleScript, (b) read the display height in points from
+        a stock-macOS source (Finder bounds of desktop window OR JXA
+        NSScreen.frame — NOT Python+Quartz, NOT pixel-resolution / 2),
+        (c) flip the y origin with cs_y = display_height - top_y - height,
+        (d) URL-encode any user-supplied paths, (e) fire
+        `open "cleanshot://capture-area?…&action=save"`, and (f) recover
+        the newly-written file by polling CleanShot's actual save folder
+        (read via `defaults read pl.maketheweb.cleanshotx exportPath` —
+        NOT `CaptureFolder`) for files newer than a marker timestamp.
+
+# Cases below target a third transcript-observed failure mode where the
+# agent captured the wrong window because it (a) hard-coded "Ghostty" as the
+# target app instead of resolving the user's actual frontmost app and (b)
+# did not raise the target window before firing the region capture, so
+# whatever happened to be on top of the screen at capture time landed in
+# the file (e.g. Slack obscuring the agent's terminal).
+
+- description: "this window" resolves the frontmost app, not a hardcoded terminal name
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      Inside an agent that's running in some macOS terminal (could be
+      Ghostty, iTerm2, Terminal.app, Wezterm, Alacritty, Kitty — agent
+      should not assume), the user typed "make a screenshot of this
+      window". Give me the AppleScript that resolves the target window
+      so I can pass its bounds to cleanshot://capture-area.
+  assert:
+    - type: not-contains
+      value: 'process "Ghostty"'
+    - type: not-contains
+      value: 'process "iTerm2"'
+    - type: llm-rubric
+      value: |
+        The AppleScript must resolve the target window dynamically by
+        finding the frontmost application process (e.g.
+        `first application process whose frontmost is true`) and taking
+        `window 1` of *that* process. It must NOT hard-code a specific
+        terminal application name (`process "Ghostty"`, `process "iTerm2"`,
+        `process "Terminal"`, etc.). Skipping menu-bar-only apps that
+        have no windows is a plus but not required.
+
+- description: raises target window before capture so occluding apps don't land in the file
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      I'm running a recipe that uses cleanshot://capture-area with x/y/
+      width/height computed from a target window's bounds. Sometimes the
+      resulting screenshot shows a *different* app's window because that
+      app was on top of my target at capture time. Why, and how do I fix
+      it inside the recipe?
+  assert:
+    - type: llm-rubric
+      value: |
+        Response must explain that cleanshot://capture-area captures the
+        pixels currently visible at the given screen rectangle, regardless
+        of which window logically "owns" those coordinates — so any app
+        layered on top of the target window will appear in the screenshot.
+        The fix must be to *raise* (bring to front) the target window
+        before firing the URL, e.g. by `set frontmost of <process> to true`
+        and/or `perform action "AXRaise" of <window>` via System Events,
+        followed by a brief `delay` so the raise actually takes effect
+        before the capture. It must NOT recommend `screencapture -l
+        <windowID>` as the primary fix — that bypasses CleanShot and
+        produces a file outside CleanShot's pipeline. Mentioning it as a
+        last-resort fallback when CleanShot is unavailable is fine.
+
+- description: documents the multi-tab/multi-window-same-app limitation
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      I run an agent inside one tab of a multi-tab Ghostty window, and the
+      same Ghostty app has another window with several other tabs. If the
+      agent runs the standard "screenshot the frontmost app's window 1"
+      recipe, will it always capture the agent's own tab? Be honest about
+      the failure modes.
+  assert:
+    - type: llm-rubric
+      value: |
+        Response must say no — System Events does not expose tabs or per-
+        TTY window mappings to AppleScript, so `window 1 of process X`
+        resolves to the application's most-recently-active *window*
+        (and the currently-active tab inside that window), which may not
+        be the agent's host tab. It should at minimum acknowledge that
+        OSC title-marker injection is unreliable in practice (the running
+        process — Claude Code, shell prompt — re-sets the title and
+        overwrites the marker faster than System Events can read it).
+        Acceptable mitigations: (a) the user explicitly names the
+        target app or activates the right window first; (b) running the
+        agent in a single-window terminal session.

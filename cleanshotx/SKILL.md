@@ -25,6 +25,9 @@ The full per-command reference with every parameter and version constraint lives
 - **`action` is a single value, not a chain.** `action=annotate` alone is valid; `action=copy,upload` is **not**. Pick one of `copy | save | annotate | upload | pin`. To compose actions (e.g. annotate then upload), drive subsequent steps from a follow-up URL or from the annotator UI.
 - **`filepath` parameter rules.** When you supply a `filepath` to any command that takes one (`pin`, `open-annotate`, `capture-text`, `add-quick-access-overlay`), it must be an **absolute path** — not `~`-relative. Expand `~` in the shell before passing. The parameter is **optional** for `pin` / `open-annotate` / `capture-text` (omitting it falls back to an interactive picker or area selection — see [references/url-scheme.md](references/url-scheme.md)) and **required** for `add-quick-access-overlay`. Accepted formats: PNG and JPEG for screenshot commands; `add-quick-access-overlay` additionally accepts MP4.
 - **`capture-window` is always interactive — wrong tool for "screenshot the X window" automation.** It enters a hover-and-click selection mode; there is no parameter to target a window by name, PID, or window ID. For unattended capture of a known window, use `capture-area` with explicit `x`, `y`, `width`, `height` (4.7+) computed from the window's frame — see [Capture a specific named window unattended](#capture-a-specific-named-window-unattended) below. Do **not** drop down to `screencapture -l` just because `capture-window` does not fit; CleanShot's URL scheme can do this headlessly.
+- **Don't infer point dimensions by halving a Retina pixel resolution.** `system_profiler SPDisplaysDataType` reports `Resolution: 3456 x 2234 Retina` — that is the *native pixel* grid. Dividing by 2 happens to be right on the *default* macOS display mode but is wrong on any scaled mode ("More Space", "Larger Text"), where points are decoupled from native pixels. Read points directly: AppleScript `tell application "Finder" to get bounds of window of desktop` (main display, 4th comma-field), or JXA `NSScreen.frame.size.height` (any display) — both return points.
+- **The save-folder defaults key is `exportPath`, not `CaptureFolder`.** `defaults read pl.maketheweb.cleanshotx CaptureFolder` does not exist — the command errors with a non-zero exit and any `|| echo "$HOME/Desktop"` fallback silently leaves you scanning `~/Desktop`, where the file will never appear if the user has moved their save folder. Always read `exportPath` (the user's "Save to" path from CleanShot ▸ Settings ▸ Screenshots).
+- **Stick to stock macOS — do not reach for PyObjC.** Tempting alternatives like `python3 -c "import Quartz; ..."` or `from AppKit import NSScreen` will fail with `ModuleNotFoundError` on a default install: PyObjC ships with Apple's system Python 2 historically but is not present in `/usr/bin/python3` or in Homebrew Python without `pip install pyobjc`. Use `osascript` (AppleScript or JavaScript-for-Automation) instead — it always works.
 - **Apple-backend / sandbox surprises.** Capturing a window or area may require Screen Recording permission for the app. Recording the screen also requires Microphone permission if audio is enabled. The first run of any command may surface a TCC prompt that needs a user click — agents cannot auto-accept TCC.
 - **`scrolling-capture` only proceeds with `start=true`** on 4.7+; without it the user has to click "Start" in the overlay. Use `start=true&autoscroll=true` for a fully unattended capture (4.7+).
 - **`record-screen` does not stop itself.** There is no `stop-recording` URL. Stop recording from the menu-bar item, the global shortcut (default ⌘⇧⌥3 stop, or click the floating control), or by sending a `cleanshot://record-screen` *toggle* — but the toggle behavior depends on the user's settings and is not guaranteed. Treat recording as user-supervised.
@@ -123,33 +126,124 @@ pbpaste   # OCR'd text
 
 The right tool for "screenshot Ghostty's window" with no clicks is **not** `capture-window` (that command always opens an interactive picker). It is `capture-area` with explicit `x/y/width/height` (4.7+) computed from the window's frame, plus `action=save`. The only twist is the coordinate flip: macOS UI APIs (System Events, AppKit, Accessibility) report top-left-origin bounds, but CleanShot's URL scheme uses the lower-left origin (`cs_y = display_height - top_y - height`).
 
-```bash
-APP="Ghostty"
+The snippet below uses **only** tools shipping in stock macOS — `osascript` (AppleScript and JXA), `defaults`, `find`. Do not reach for PyObjC / `import Quartz` / `pip install pyobjc` here: those are **not** part of a stock macOS python3, and any agent that tries them will hit `ModuleNotFoundError: No module named 'Quartz'`. AppleScript covers everything you need.
 
-# 1. Pull front-window position/size via System Events (top-left origin, points).
-read -r WX WY WW WH <<<"$(osascript <<EOF
-tell application "System Events" to tell process "$APP"
-  set p to position of window 1
-  set s to size of window 1
-  return (item 1 of p as text) & " " & (item 2 of p as text) & " " & (item 1 of s as text) & " " & (item 2 of s as text)
+There are two flavours of "the right window":
+
+- **"This window"** (the one the user is currently looking at, e.g. when the user types "screenshot this window" inside the agent's host terminal). Resolve the *frontmost application*'s frontmost window — do **not** hard-code an app name like `Ghostty`, because that breaks the moment the user runs the agent inside iTerm2, Terminal.app, Alacritty, Wezterm, Kitty, or any other terminal.
+- **"Window of app X"** (the user explicitly named the app, e.g. "screenshot Slack"). Pin the AppleScript to that app by name.
+
+Both flavours share the rest of the pipeline (raise the window so it isn't occluded; flip y; fire the URL; poll for the file). The only difference is how `APPNAME` and the window-bounds query are resolved at the start.
+
+```bash
+# 1a. Resolve "this window" — the frontmost app's frontmost window. Atomic
+#     in one AppleScript pass so the answer can't drift between calls.
+read -r APPNAME WX WY WW WH <<<"$(osascript <<'AS'
+tell application "System Events"
+  set frontApp to first application process whose frontmost is true
+  -- Skip menu-bar-only apps (no windows) and walk to the next visible app.
+  if (count of windows of frontApp) = 0 then
+    repeat with proc in (every application process whose visible is true)
+      if (count of windows of proc) > 0 then set frontApp to proc
+      if (count of windows of frontApp) > 0 then exit repeat
+    end repeat
+  end if
+  set w to window 1 of frontApp
+  -- Raise it so a region-capture doesn't grab whatever is currently on top.
+  try
+    set frontmost of frontApp to true
+  end try
+  try
+    perform action "AXRaise" of w
+  end try
+  delay 0.2
+  set pos to position of w
+  set sz to size of w
+  return (name of frontApp) & " " & (item 1 of pos as text) & " " & (item 2 of pos as text) & " " & (item 1 of sz as text) & " " & (item 2 of sz as text)
 end tell
-EOF
+AS
 )"
 
-# 2. Read the main display height in points (Quartz, not Retina pixels).
-SH=$(osascript -e 'tell application "Finder" to get bounds of window of desktop' \
-  | awk -F', ' '{print $4}')
+# 1b. Alternative: pin to a specific named app (e.g. APP="Slack").
+#     Use this when the user explicitly named the target app.
+#     APP="Slack"
+#     read -r APPNAME WX WY WW WH <<<"$(osascript <<EOF
+#     tell application "System Events" to tell process "$APP"
+#       set w to window 1
+#       try
+#         set frontmost to true
+#       end try
+#       try
+#         perform action "AXRaise" of w
+#       end try
+#       delay 0.2
+#       set p to position of w
+#       set s to size of w
+#       return "$APP" & " " & (item 1 of p as text) & " " & (item 2 of p as text) & " " & (item 1 of s as text) & " " & (item 2 of s as text)
+#     end tell
+#     EOF
+#     )"
+
+# 2. Read the *point* height of the display the window lives on. Use JXA so it
+#    works for any display, not just the primary one. NSScreen frames are in
+#    points already — do NOT divide a Retina pixel resolution from
+#    system_profiler by 2; that breaks on scaled modes ("More Space",
+#    "Larger Text") where points are decoupled from native pixels.
+SH=$(osascript -l JavaScript -e '
+  ObjC.import("AppKit");
+  (function () {
+    var screens = $.NSScreen.screens, x = '"$WX"', y = '"$WY"';
+    for (var i = 0; i < screens.count; i++) {
+      var f = screens.objectAtIndex(i).frame;
+      if (x >= f.origin.x && x < f.origin.x + f.size.width
+          && y >= f.origin.y && y < f.origin.y + f.size.height) {
+        return f.size.height; // points
+      }
+    }
+    return $.NSScreen.mainScreen.frame.size.height; // fallback: main display
+  })();
+')
 
 # 3. Flip the y origin: CleanShot measures from the bottom of the screen.
 CSY=$(( SH - WY - WH ))
 
-# 4. Fire the headless region capture and save to disk.
+# 4. Drop a marker so we can find the new file later, then fire the capture.
+MARK=$(mktemp -t cs.marker)
 open "cleanshot://capture-area?x=${WX}&y=${CSY}&width=${WW}&height=${WH}&action=save"
+
+# 5. Resolve CleanShot's *real* save folder. The defaults key is `exportPath`
+#    — NOT `CaptureFolder` (which does not exist; `defaults read` errors and
+#    you silently end up looking in ~/Desktop, where no file ever appears).
+SAVE_DIR=$(defaults read pl.maketheweb.cleanshotx exportPath 2>/dev/null \
+  || echo "$HOME/Desktop")
+
+# 6. Poll the save folder for a brand-new file written after our marker.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  NEW=$(find "$SAVE_DIR" -type f -newer "$MARK" \
+    \( -name '*.png' -o -name '*.jpg' \) -print -quit 2>/dev/null)
+  [ -n "$NEW" ] && { echo "$NEW"; break; }
+  sleep 0.3
+done
 ```
 
-Add `&display=N` (1-based) if the window lives on a non-primary display. The capture itself is unattended; CleanShot may still flash a save-confirmation overlay unless the user has set "After capture: Save" in their settings. To find the resulting file path, see [Locate the file CleanShot just saved](#locate-the-file-cleanshot-just-saved) below.
+Add `&display=N` (1-based) to the URL if you also want CleanShot to disambiguate; the capture-area math above already handles non-primary displays through JXA's `NSScreen.screens` lookup. CleanShot may still flash a save-confirmation overlay unless the user has set "After capture: Save" in their settings.
 
-If you need the window's bounds programmatically without AppleScript, `Quartz.CGWindowListCopyWindowInfo` (PyObjC) returns each window's `kCGWindowBounds`; convert the same way.
+If you have a single primary display and want a one-liner instead of the JXA snippet, AppleScript's Finder also returns the main display height in points: `osascript -e 'tell application "Finder" to get bounds of window of desktop' | awk -F', ' '{print $4}'`. Same caveat — points, not pixels.
+
+#### Caveat: multi-tab/multi-window terminals and "this window"
+
+System Events models a macOS *application process* as having an ordered list of *windows*. It does **not** expose tabs, panes, or per-TTY window mappings. So when the agent runs inside one tab/pane of a multi-tab terminal (Ghostty, iTerm2, Wezterm, Kitty, Alacritty…) and the user has *also* opened other windows or tabs in that same terminal app, the recipe above resolves to the application's most-recently-active window — which may not be the agent's own host tab/window.
+
+Tempting fixes that don't work reliably:
+
+- **OSC 0/2 title-marker injection** (writing an `ESC ] 0 ; MARKER BEL` sequence to `/dev/<user-tty>`). The marker reaches the right pty, but Claude Code (and many shell prompts) re-set the window title on every render, so the marker is overwritten well under a second after you write it — System Events usually reads the post-restore title, not the marker.
+- **`screencapture -l <windowID>`**. It bypasses CleanShot entirely and produces a file CleanShot's pipeline doesn't know about; only fall back to it when CleanShot is genuinely unavailable.
+- **Ghostty's `GHOSTTY_SURFACE_ID` env var.** Ghostty exposes the surface id but does not (as of 1.3.x) provide a CLI/AppleScript hook to focus a surface by id, so reading the env var doesn't get you to the right window.
+
+What to do instead:
+1. Resolve the frontmost app + its frontmost window atomically (the snippet above) and capture immediately. In the common case — single-window terminal, or the user is actively staring at the agent — this is correct.
+2. If the user explicitly names a target ("screenshot Slack"), use the `APP=…` variant in `1b` so the result doesn't depend on what happens to be frontmost.
+3. If the user has multiple windows of the *same* app and demands the agent's host window specifically, the only fully reliable path is to ask them to bring that window to the front first, or to run the agent in a single-window terminal session for the duration of the capture.
 
 ### Unattended scrolling capture of a long page (4.7+)
 
@@ -173,23 +267,23 @@ The image floats above all windows until the user closes the pin. The URL scheme
 
 The `open "cleanshot://…"` call returns immediately and prints nothing — there is no synchronous way to recover the saved file path. Three workable patterns:
 
-1. **Poll the configured save folder.** Read the user's "Save to" path and pick the newest file written after a marker:
+1. **Poll the configured save folder.** Read the user's "Save to" path from `pl.maketheweb.cleanshotx`'s `exportPath` default (do **not** read `CaptureFolder` — that key does not exist; `defaults read` will error out and your fallback to `~/Desktop` will look in the wrong place for any user who has changed their CleanShot save folder), then pick the newest file written after a marker:
 
    ```bash
-   SAVE_DIR=$(defaults read pl.maketheweb.cleanshotx CaptureFolder 2>/dev/null \
+   SAVE_DIR=$(defaults read pl.maketheweb.cleanshotx exportPath 2>/dev/null \
      || echo "$HOME/Desktop")
-   touch /tmp/.cs.marker
+   MARK=$(mktemp -t cs.marker)
    open "cleanshot://capture-area?x=0&y=0&width=800&height=600&action=save"
    # Wait briefly for CleanShot to write the file, then grab the newest one.
    for _ in 1 2 3 4 5; do
-     NEW=$(find "$SAVE_DIR" -type f -newer /tmp/.cs.marker \
+     NEW=$(find "$SAVE_DIR" -type f -newer "$MARK" \
        \( -name '*.png' -o -name '*.jpg' \) -print -quit)
      [ -n "$NEW" ] && { echo "$NEW"; break; }
      sleep 0.5
    done
    ```
 
-   `find … -newer` works because CleanShot writes a brand-new file per capture.
+   `find … -newer` works because CleanShot writes a brand-new file per capture. (`annotateLastSaveURL` in the same defaults domain also tracks the most recently saved capture, but it's only updated when CleanShot's annotator wrote the file — `exportPath` + a fresh-file scan is more reliable.)
 
 2. **Use `action=copy` instead of `save`.** The image goes on the clipboard; pull bytes with `pbpaste` (or the AppKit `NSPasteboard`) and write them yourself.
 
