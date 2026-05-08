@@ -32,7 +32,7 @@ For end-user workflows (installing Linux, Windows, macOS guests; networking; fil
 - **VM identifier is a name OR a UUID.** Pass either; UTM resolves both. Names with spaces must be quoted: `utmctl start "Ubuntu 24.04"`.
 - **`delete` has no confirmation.** Always check with `utmctl list` first.
 - **`stop` defaults to `--force` (sends a stop request to the QEMU/VZ backend).** Use `--request` to ask the guest OS to power down cleanly, or `--kill` only as a last resort.
-- **Apple-backend VMs do not support `input keystroke`, `input mouse click`, `input scan code`, USB connect/disconnect, or QEMU guest-agent commands** (`exec`, `file pull`, `file push`, `ip-address`). Detect the backend before calling these — see the recipe below.
+- **Apple-backend VMs do not support `input keystroke`, `input mouse click`, `input scan code`, USB connect/disconnect, or QEMU guest-agent commands** (`exec`, `file pull`, `file push`, `ip-address`). Detect the backend before calling these — see the recipe below. In particular, **do not call `utmctl ip-address` on an Apple-backend VM** even speculatively — it always fails with `Operation not supported by the backend`. Use ARP on `bridge100` or mDNS (`<host>.local`) instead; see [Finding a guest's IP](#finding-a-guests-ip).
 - **`exec`, `file`, and `ip-address` need the QEMU guest agent.** Install `qemu-guest-agent` in Linux (`apt install qemu-guest-agent && systemctl enable --now qemu-guest-agent`) or `virtio-win` Guest Tools on Windows. Without it these commands time out or return "no agent".
 - **Never `utmctl clone` a macOS guest.** `utmctl clone` is a bundle deep-copy: the duplicate keeps the original's `AuxiliaryStorage` and `HardwareModel`, so two VMs end up sharing one Apple machine identity. The clone may still boot, but iCloud / Apple ID / FaceTime / activation will misbehave on one or both copies, and `AuxiliaryStorage` cannot be regenerated without a fresh restore. For macOS guests use AppleScript `duplicate` instead — it regenerates the auxiliary blob. Linux/Windows/QEMU guests are safe to `utmctl clone`. See the macOS-clone recipe below and [references/workflows.md](references/workflows.md#installing-macos-as-a-guest).
 - **Always name clones/duplicates with a unique identifier.** Append a timestamp or date — `macOS-test-2026-05-08`, `ubuntu-base-clone-20260508-1530`, `<base>-<purpose>-<YYYYMMDD>` — never just `-test` or `-clone`. UTM allows duplicate names, so two `<base> Clone` VMs will silently collide in scripts that resolve by name; a unique identifier also makes it obvious which copy to delete later.
@@ -173,7 +173,45 @@ for i in $(seq 1 60); do
 done
 ```
 
-For Apple-backend VMs without a guest agent, ping the expected hostname (`*.local` via mDNS) or scrape the SPICE display title from the UI.
+For Apple-backend VMs there is no guest agent, so `utmctl ip-address` is unusable — see the next section for the right approach.
+
+## Finding a guest's IP
+
+Pick the path by backend — do not just call `utmctl ip-address` and hope:
+
+- **QEMU backend with `qemu-guest-agent` installed** → `utmctl ip-address "<vm>"`. This is the only path that returns the IP directly. Returns IPv4 first, then IPv6, one per line.
+- **Apple backend (always)** and **QEMU backend without the guest agent** → `utmctl ip-address` will fail with `Operation not supported by the backend` (Apple) or time out with "no agent" (QEMU). Do not run it. Use ARP or mDNS instead.
+
+Detect the backend first:
+
+```bash
+backend=$(osascript -e 'tell application "UTM" to get backend of virtual machine named "MyVM" as text')
+```
+
+UTM's default **Shared (NAT)** network on macOS lives on host interface `bridge100` with subnet `192.168.64.0/24`. Both Apple-backend and QEMU-backend "Shared" guests appear here; bridged-mode guests appear on the host's primary LAN instead.
+
+Scope the ARP lookup to `bridge100` so you get UTM guests only — a bare `arp -a` returns every neighbor on every interface:
+
+```bash
+# All running UTM Shared-network guests, by IP and MAC
+arp -a -n -i bridge100
+
+# Pick the only guest IP (skip the bridge's own .1 gateway and incomplete entries)
+arp -a -n -i bridge100 \
+  | awk '$2 != "(192.168.64.1)" && $4 != "incomplete" && $2 ~ /^\(/ { gsub(/[()]/, "", $2); print $2 }'
+```
+
+If the guest advertises mDNS (most Linux distros and macOS guests do by default):
+
+```bash
+# Resolve a known hostname
+dscacheutil -q host -a name myhost.local
+
+# Browse all SSH-advertising guests on the local link
+dns-sd -B _ssh._tcp local.
+```
+
+Hovering over the network icon in UTM's status bar shows the IP for the focused VM and is the simplest fallback when scripting is overkill.
 
 ## Common shapes of work
 

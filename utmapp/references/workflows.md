@@ -174,9 +174,22 @@ Apple-backend VMs do not support port forwarding — use Bridged mode and connec
 
 ### Finding the guest's IP
 
-- QEMU + guest agent: `utmctl ip-address "<vm>"`
-- Apple backend: hover over the network icon in UTM's status bar; or look up the MAC in the host's ARP table (`arp -a | grep <mac>`).
-- mDNS: most distros announce themselves at `<hostname>.local`.
+UTM's default Shared (NAT) network lives on host interface `bridge100`, subnet `192.168.64.0/24` (gateway `.1`). Both Apple-backend and QEMU "Shared" guests show up there; bridged-mode guests appear on the host's primary LAN (`en0` etc.) instead.
+
+- **QEMU + guest agent installed** → `utmctl ip-address "<vm>"`. Only path that returns the IP directly.
+- **Apple backend (always)** and **QEMU without guest agent** → `utmctl ip-address` will fail (Apple: `Operation not supported by the backend`; QEMU without agent: timeout). Skip it. Read the host ARP table on `bridge100`:
+  ```bash
+  arp -a -n -i bridge100                                # raw table
+  arp -a -n -i bridge100 \
+    | awk '$2 != "(192.168.64.1)" && $4 != "incomplete" && $2 ~ /^\(/ \
+           { gsub(/[()]/, "", $2); print $2 }'         # one IP per running guest (excludes the bridge gateway)
+  ```
+- **mDNS** (most Linux distros and macOS guests advertise by default):
+  ```bash
+  dscacheutil -q host -a name myhost.local              # resolve a known hostname
+  dns-sd -B _ssh._tcp local.                            # browse advertising hosts
+  ```
+- **GUI fallback**: hover over the network icon in UTM's status bar.
 
 ## Snapshots and backups
 
