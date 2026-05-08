@@ -34,6 +34,8 @@ For end-user workflows (installing Linux, Windows, macOS guests; networking; fil
 - **`stop` defaults to `--force` (sends a stop request to the QEMU/VZ backend).** Use `--request` to ask the guest OS to power down cleanly, or `--kill` only as a last resort.
 - **Apple-backend VMs do not support `input keystroke`, `input mouse click`, `input scan code`, USB connect/disconnect, or QEMU guest-agent commands** (`exec`, `file pull`, `file push`, `ip-address`). Detect the backend before calling these — see the recipe below.
 - **`exec`, `file`, and `ip-address` need the QEMU guest agent.** Install `qemu-guest-agent` in Linux (`apt install qemu-guest-agent && systemctl enable --now qemu-guest-agent`) or `virtio-win` Guest Tools on Windows. Without it these commands time out or return "no agent".
+- **Never `utmctl clone` a macOS guest.** `utmctl clone` is a bundle deep-copy: the duplicate keeps the original's `AuxiliaryStorage` and `HardwareModel`, so two VMs end up sharing one Apple machine identity. The clone may still boot, but iCloud / Apple ID / FaceTime / activation will misbehave on one or both copies, and `AuxiliaryStorage` cannot be regenerated without a fresh restore. For macOS guests use AppleScript `duplicate` instead — it regenerates the auxiliary blob. Linux/Windows/QEMU guests are safe to `utmctl clone`. See the macOS-clone recipe below and [references/workflows.md](references/workflows.md#installing-macos-as-a-guest).
+- **Always name clones/duplicates with a unique identifier.** Append a timestamp or date — `macOS-test-2026-05-08`, `ubuntu-base-clone-20260508-1530`, `<base>-<purpose>-<YYYYMMDD>` — never just `-test` or `-clone`. UTM allows duplicate names, so two `<base> Clone` VMs will silently collide in scripts that resolve by name; a unique identifier also makes it obvious which copy to delete later.
 - **Bridged networking + macOS Sequoia** require granting UTM the "Local Network" privacy permission, otherwise the guest gets no IP.
 - **JIT on iOS** is a separate world — see [references/troubleshooting.md](references/troubleshooting.md) (UTM SE, AltStore, jailbreak workarounds). All scripting in this skill is **macOS only**.
 
@@ -63,8 +65,8 @@ utmctl start "Ubuntu" --disposable # discard all changes on stop
 utmctl start "macOS Sonoma" --recovery
 
 # Clone, delete, version
-utmctl clone "Ubuntu" --name "Ubuntu-test"
-utmctl delete "Ubuntu-test"        # NO confirmation
+utmctl clone "Ubuntu" --name "Ubuntu-test-$(date +%Y%m%d)"  # Linux/Windows/QEMU only; always tag with a date/ID
+utmctl delete "Ubuntu-test-20260508"   # NO confirmation
 utmctl version
 ```
 
@@ -100,7 +102,9 @@ utmctl usb disconnect 4
 
 | Need | Use |
 | --- | --- |
-| start/stop/suspend/list/status/clone/delete | `utmctl` |
+| start/stop/suspend/list/status/delete | `utmctl` |
+| Clone a Linux/Windows/QEMU guest | `utmctl clone` |
+| Clone a **macOS** guest | AppleScript `duplicate` (see recipe below) — `utmctl clone` shares the machine identity |
 | exec, file pull/push, ip-address, USB connect/disconnect | `utmctl` |
 | Send keystrokes / text / mouse clicks into the guest | AppleScript (`input keystroke`, `input mouse click`, `input scan code`) |
 | Create a new VM from scratch | AppleScript (`make new virtual machine`) |
@@ -134,6 +138,27 @@ if (vm.backend() === "qemu") {
 }
 ```
 
+## Duplicating a macOS guest
+
+`utmctl clone` is a bundle deep-copy. For macOS guests on the Apple backend that breaks Apple-services identity (see gotcha above). Use AppleScript `duplicate` instead — it tells UTM to regenerate the auxiliary identity blob. Always tag the new name with a timestamp / date so you can tell duplicates apart and avoid name collisions:
+
+```bash
+NEW_NAME="macOS-test-$(date +%Y%m%d-%H%M)"
+osascript -e "tell application \"UTM\" to duplicate virtual machine named \"macOS-base\" with properties {configuration:{name:\"$NEW_NAME\"}}"
+```
+
+Or in JXA:
+
+```bash
+osascript -l JavaScript -e "
+const utm = Application('UTM');
+const stamp = new Date().toISOString().slice(0,10);
+utm.duplicate(utm.virtualMachines.byName('macOS-base'), { withProperties: { configuration: { name: 'macOS-test-' + stamp } } });
+"
+```
+
+Before duplicating, confirm the source VM is on the Apple backend and is fully shut down (`utmctl status "macOS-base"` → `stopped`). Even with `duplicate`, Apple's macOS licence only permits two macOS guests running concurrently per host. See [references/applescript.md](references/applescript.md#creating-importing-exporting-cloning-deleting) for the full `duplicate` signature.
+
 ## Wait-until-ready recipe
 
 `utmctl start` returns once the backend has launched, **not** when the guest is booted. To wait until the guest is reachable, poll either status or — better — the guest agent:
@@ -153,7 +178,7 @@ For Apple-backend VMs without a guest agent, ping the expected hostname (`*.loca
 ## Common shapes of work
 
 - **"Run command X in VM Y, return output"** → `utmctl exec`. See [references/utmctl.md#exec](references/utmctl.md#exec).
-- **"Spin up a fresh VM from a template"** → `utmctl clone --name`, then `utmctl start --disposable` for ephemeral runs.
+- **"Spin up a fresh VM from a template"** → `utmctl clone --name`, then `utmctl start --disposable` for ephemeral runs. **macOS guests only:** use AppleScript `duplicate` instead of `utmctl clone` — see the macOS-clone recipe above.
 - **"Type something into the login screen"** → AppleScript `input keystroke` / `input scan code`. See [references/applescript.md](references/applescript.md#input-automation).
 - **"Change VM configuration"** → AppleScript `update configuration` (VM must be stopped).
 - **"Rebind a shared host directory"** → AppleScript `update registry` (replaces every shared dir at once; this command does NOT cover removable-media swaps — those require the GUI).

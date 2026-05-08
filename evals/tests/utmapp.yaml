@@ -73,3 +73,53 @@
         install qemu-guest-agent (or virtio-win Guest Tools on Windows) and
         enable the systemd service. Must NOT suggest unrelated fixes like
         SSH, network changes, or rebooting the host.
+
+- description: duplicating a macOS guest must use AppleScript duplicate, not utmctl clone
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      I have a UTM VM called "macOS-base" running macOS on Apple Silicon (Apple
+      Virtualization backend). I want to make a new test VM from it called
+      "macOS-test". Give me the exact command(s) to run.
+  assert:
+    - type: llm-rubric
+      value: |
+        Response MUST recommend AppleScript `duplicate` (e.g.
+        `osascript -e 'tell application "UTM" to duplicate virtual machine
+        named "macOS-base" with properties {configuration:{name:"macOS-test"}}'`
+        or an equivalent JXA snippet) for macOS Apple-backend guests, AND
+        explicitly warn that `utmctl clone` produces two VMs sharing the same
+        machine identity (AuxiliaryStorage / HardwareModel) which breaks Apple
+        services such as iCloud / activation / FaceTime in the duplicate.
+        The response must NOT recommend `utmctl clone` as the primary approach
+        for a macOS guest. Pointing to `utmctl clone` only as a contrast /
+        antipattern is acceptable.
+
+- description: utmctl clone is fine for non-macOS guests
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      I have an Ubuntu UTM VM called "ubuntu-base". Give me the shell command
+      to make a copy named "ubuntu-test". Output only the command.
+  assert:
+    - type: regex
+      value: 'utmctl clone ["\x27]ubuntu-base["\x27].*--name ["\x27]ubuntu-test["\x27]'
+
+- description: clone/duplicate names must include a unique identifier (timestamp/date)
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      I have a UTM VM called "ubuntu-base". I want to clone it. Suggest a
+      name for the new VM and give me the command to create it. Don't ask
+      me what to name it — just pick a sensible default.
+  assert:
+    - type: llm-rubric
+      value: |
+        The suggested clone name MUST include a unique identifier — a date
+        (e.g. `2026-05-08`, `20260508`), a timestamp (e.g. `20260508-1530`),
+        or an equivalent unique tag (UUID, build number, ISO date, `$(date
+        +%Y%m%d)`). Plain bland names like "ubuntu-test", "ubuntu-clone",
+        "ubuntu-copy", "ubuntu-base-2", or "ubuntu-base Clone" without any
+        date/timestamp/ID component MUST fail this rubric. The rationale —
+        avoiding collisions and being able to tell duplicates apart — should
+        be at least implicitly visible (a dated name shows it).
