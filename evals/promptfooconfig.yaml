@@ -1,0 +1,28 @@
+# Behavioral evals for every skill in this repo, run via promptfoo.
+#
+# Run from the repo root:
+#   ANTHROPIC_API_KEY=... npx promptfoo eval --config evals/promptfooconfig.yaml
+#
+# Filter to one skill while iterating:
+#   npx promptfoo eval --config evals/promptfooconfig.yaml --filter-pattern cleanshotx
+#
+# View the last run as a UI:
+#   npx promptfoo view
+
+description: Agent Skills behavioral evals
+
+prompts:
+  - file://prompts/build_prompt.js:buildPrompt
+
+providers:
+  - id: anthropic:messages:claude-sonnet-4-6
+    label: claude-sonnet-4-6
+    config:
+      max_tokens: 1024
+      temperature: 0
+
+# Test files are split per skill so it's easy to add a new skill without
+# touching this top-level config.
+tests:
+  - file://tests/cleanshotx.yaml
+  - file://tests/utmapp.yaml

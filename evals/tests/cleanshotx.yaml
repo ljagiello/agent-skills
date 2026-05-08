@@ -1,0 +1,114 @@
+# Behavioral evals for the cleanshotx skill.
+#
+# Each case loads cleanshotx/SKILL.md as the system prompt (via build_prompt.js)
+# and asserts that the model's reply respects the skill's rules: emits valid
+# cleanshot:// URLs, URL-encodes filepaths, refuses to invent missing commands,
+# and applies the lower-left coordinate origin and version-gating gotchas.
+
+- description: capture-area + clipboard returns a valid cleanshot:// URL
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      Give me the exact one-line shell command to capture a screen area with
+      CleanShot X and copy the resulting image to the clipboard. No commentary,
+      just the command.
+  assert:
+    - type: regex
+      value: 'cleanshot://capture-area\?[^\s"''`]*action=copy'
+    - type: contains
+      value: open
+
+- description: pin filepath is URL-encoded
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      Show me the cleanshot:// URL to pin the image at
+      ~/Desktop/My Screenshot.png on top of all windows. Output the URL only.
+  assert:
+    - type: regex
+      value: 'cleanshot://pin\?filepath=[^\s"''`]*%20'
+    - type: not-contains
+      value: '~/Desktop'
+
+- description: refuses to invent a stop-recording URL
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      How do I stop a screen recording programmatically via the cleanshot://
+      URL scheme?
+  assert:
+    - type: llm-rubric
+      value: |
+        The response must clearly state that the cleanshot:// URL scheme has
+        no documented stop-recording command and that the user must stop the
+        recording via the menu-bar item, the floating control, or a keyboard
+        shortcut. It must NOT *recommend* or *prescribe* a URL like
+        cleanshot://stop-recording or cleanshot://record-screen?action=stop
+        as a working solution — quoting such a URL while explaining that it
+        does not exist is fine.
+
+- description: states origin is lower-left for spatial parameters
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      For cleanshot://capture-area, where is the origin (0,0) of the x and y
+      parameters located on the screen? Be specific.
+  assert:
+    - type: regex
+      value: '[Ll]ower[- ]?[Ll]eft|[Bb]ottom[- ]?[Ll]eft'
+    - type: llm-rubric
+      value: |
+        Response must affirm that CleanShot's coordinate origin (0,0) is at
+        the lower-left (or bottom-left) corner of the screen, with y
+        increasing upward. It must not assert that the origin is at the
+        top-left corner of the CleanShot coordinate system. (Mentioning
+        top-left as a contrast with another framework, e.g. "unlike UIKit's
+        top-left convention", is acceptable.)
+
+- description: action= requires CleanShot 4.7+
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      What is the minimum CleanShot X version that supports the action= URL
+      parameter? Reply with just the version number.
+  assert:
+    - type: contains
+      value: '4.7'
+    - type: not-contains
+      value: '3.5.1'
+
+- description: capture-text without filepath opens an interactive selection
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      What does cleanshot://capture-text do if I omit the filepath parameter?
+  assert:
+    - type: llm-rubric
+      value: |
+        Response must say CleanShot opens an interactive area selection / OCRs
+        a region selected by the user. It must NOT claim that the command
+        silently OCRs the most recent screenshot, the clipboard image, or any
+        other implicit input.
+
+- description: action= is single-valued, not a chain
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      Can I write cleanshot://capture-area?action=copy,upload to copy AND
+      upload in one call?
+  assert:
+    - type: llm-rubric
+      value: |
+        Response must say no — action= takes exactly one of copy/save/annotate/
+        upload/pin and cannot be chained or comma-separated. It should suggest
+        running multiple URLs sequentially or using the post-capture UI.
+
+- description: cites the cleanshotx skill explicitly when relevant
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      I want to take a quick fullscreen screenshot from the terminal. Suggest
+      a command.
+  assert:
+    - type: contains
+      value: 'cleanshot://capture-fullscreen'

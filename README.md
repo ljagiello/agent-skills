@@ -40,6 +40,15 @@ Each skill follows the [Agent Skills specification](https://agentskills.io/speci
 
 When adding or editing a skill, every factual claim should trace back to a verified source — for `utmapp` that meant `UTMCtl.swift`, `UTM.sdef`, and the `Configuration/*.swift` `CodingKeys` declarations in the upstream UTM repo. Treat the spec's authoring [best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices) as the bar.
 
+## Evals
+
+Two layers of automated checks live under [`evals/`](evals/):
+
+- **Static validator** (`python3 evals/validate.py`) — stdlib-only, deterministic, free. Verifies frontmatter limits, name/dirname match, body line count, and that every Markdown reference resolves to a real file.
+- **Behavioral evals** (`npx promptfoo eval --config evals/promptfooconfig.yaml`) — drive Claude with each skill loaded as the system prompt and assert that it emits valid commands, applies the skill's gotchas, and refuses to invent missing features. Requires `ANTHROPIC_API_KEY`.
+
+See [`evals/README.md`](evals/README.md) for the full setup, how the prompt function wires SKILL.md into the system prompt, and how to add cases for a new skill.
+
 ## License
 
 MIT
