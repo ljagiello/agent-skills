@@ -1,0 +1,75 @@
+# Behavioral evals for the utmapp skill.
+#
+# Loads utmapp/SKILL.md as the system prompt and asserts that the model picks
+# the right tool for each task, applies the documented gotchas (no auto-confirm
+# on delete, Apple-backend limitations), and prefers the safer flag variants.
+
+- description: start a VM uses utmctl start with quoted name
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      Give me the shell command to start a UTM VM named "Ubuntu Server".
+      Output only the command.
+  assert:
+    - type: regex
+      value: 'utmctl start ["\x27]Ubuntu Server["\x27]'
+
+- description: delete warns about no confirmation prompt
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      Show me how to delete a UTM VM via utmctl. Mention any safety concerns.
+  assert:
+    - type: contains
+      value: 'utmctl delete'
+    - type: llm-rubric
+      value: |
+        Response must warn that utmctl delete has no confirmation prompt, and
+        recommend listing VMs first (utmctl list) and/or backing up the .utm
+        bundle before running it. The warning must be explicit, not implied.
+
+- description: Apple Virtualization backend lacks scripted input
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      Can I use AppleScript "input keystroke" to send keys to a UTM VM running
+      with the Apple Virtualization backend?
+  assert:
+    - type: llm-rubric
+      value: |
+        Response must say "no" — input keystroke (and other scripted input,
+        USB connect/disconnect, QEMU guest-agent commands like exec/file/
+        ip-address) is not supported on the Apple Virtualization backend, only
+        on the QEMU backend. Must NOT claim Apple-backend VMs accept scripted
+        keyboard input.
+
+- description: explains stop, --request, and --kill correctly
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      What's the practical difference between `utmctl stop "VM"`,
+      `utmctl stop "VM" --request`, and `utmctl stop "VM" --kill`? Which
+      should I use first?
+  assert:
+    - type: llm-rubric
+      value: |
+        Response must correctly explain all three variants:
+        - bare `stop` force-stops at the backend layer (default = --force).
+        - `--request` asks the guest OS to power down cleanly.
+        - `--kill` is a last-resort hard kill.
+        It should also recommend trying --request first for a clean shutdown.
+
+- description: exec/file/ip-address require the QEMU guest agent
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      I just ran `utmctl exec "Ubuntu" -- /bin/uname -a` against my Linux VM
+      but it times out. What's the most likely cause and fix?
+  assert:
+    - type: llm-rubric
+      value: |
+        Response must identify the root cause as the QEMU guest agent not
+        being installed/running inside the guest, and instruct the user to
+        install qemu-guest-agent (or virtio-win Guest Tools on Windows) and
+        enable the systemd service. Must NOT suggest unrelated fixes like
+        SSH, network changes, or rebooting the host.
