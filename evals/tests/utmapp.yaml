@@ -123,3 +123,58 @@
         date/timestamp/ID component MUST fail this rubric. The rationale —
         avoiding collisions and being able to tell duplicates apart — should
         be at least implicitly visible (a dated name shows it).
+
+- description: do not call utmctl ip-address on Apple-backend VMs — go straight to ARP/mDNS
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      I have a running UTM VM on the Apple Virtualization backend (macOS guest).
+      How do I find its IP address from the host? Give me the exact commands
+      to run.
+  assert:
+    - type: not-contains
+      value: 'utmctl ip-address'
+    - type: llm-rubric
+      value: |
+        Response MUST tell the user to skip `utmctl ip-address` entirely on
+        Apple-backend VMs (it always fails with "Operation not supported by
+        the backend" because there is no QEMU guest agent). It must NOT
+        suggest running `utmctl ip-address` "just to try" or as a first step.
+        Instead it MUST recommend reading the host ARP table (`arp -a`) on
+        UTM's shared-network bridge interface (`bridge100`, subnet
+        `192.168.64.0/24`) and/or mDNS lookup of `<hostname>.local`
+        (`dscacheutil -q host -a name <hostname>.local`, `dns-sd -B
+        _ssh._tcp local.`, or `ping -c1 <hostname>.local`). Hovering over
+        the network icon in the UTM UI is also acceptable as a fallback.
+
+- description: UTM shared-network bridge is bridge100 / 192.168.64.0/24
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      Which host interface and subnet does UTM use for its default Shared
+      (NAT) network on macOS? I want to filter the ARP table to just the
+      UTM guests. Output only the interface name and subnet.
+  assert:
+    - type: contains
+      value: 'bridge100'
+    - type: contains
+      value: '192.168.64'
+
+- description: filter ARP to UTM bridge, do not scan whole table
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      Give me a one-liner that lists every running UTM guest's IP from the
+      host ARP table, scoped only to UTM's shared network. Output only the
+      command.
+  assert:
+    - type: regex
+      value: 'arp\s+(-[a-z]+\s+)*(-i\s+bridge100|bridge100)'
+    - type: llm-rubric
+      value: |
+        The command MUST scope the ARP lookup to UTM's shared-network
+        bridge interface `bridge100` (e.g. `arp -a -i bridge100`,
+        `arp -an | grep bridge100`, or `arp -a -n | awk '/bridge100/'`).
+        A bare `arp -a` with no scoping MUST fail this rubric — that returns
+        every neighbor on every interface, which is what we are trying to
+        avoid.

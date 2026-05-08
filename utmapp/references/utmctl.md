@@ -172,7 +172,9 @@ TCP: 127.0.0.1:4001
 utmctl ip-address <identifier>
 ```
 
-Prints one IP per line. IPv4 addresses appear before IPv6. Loopback addresses are excluded. Requires the **QEMU guest agent** to be running in the guest. Will fail on the Apple backend (no guest agent).
+Prints one IP per line. IPv4 addresses appear before IPv6. Loopback addresses are excluded. Requires the **QEMU guest agent** to be running in the guest.
+
+**Do not call this on Apple-backend VMs.** It always fails with `Operation not supported by the backend` and does nothing useful — there is no guest agent on Apple Virtualization. Detect the backend first (`osascript -e 'tell application "UTM" to get backend of virtual machine named "<vm>" as text'`); on `apple`, use ARP on `bridge100` or mDNS instead. See [SKILL.md → Finding a guest's IP](../SKILL.md#finding-a-guests-ip).
 
 Useful pattern (poll until ready):
 
