@@ -112,3 +112,89 @@
   assert:
     - type: contains
       value: 'cleanshot://capture-fullscreen'
+
+# Cases below target the transcript-observed failure mode where the agent
+# activated cleanshotx, then bypassed CleanShot in favour of the native
+# `screencapture` CLI for a "screenshot my <app> window" request. The skill
+# must (a) own this workflow with a clear recipe, (b) explain the lower-left
+# coordinate conversion needed when window bounds come from System Events,
+# (c) say that capture-window is interactive only, and (d) explain how to
+# discover the resulting file when action=save.
+
+- description: screenshot a named app's window without user clicks — uses CleanShot, not screencapture
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      Make a screenshot of my Ghostty window and save it to disk. CleanShot X
+      4.7+ is installed. I do not want to click on a window or drag a region —
+      this must be fully unattended. Show me the exact shell commands you
+      would run.
+  assert:
+    - type: contains
+      value: 'cleanshot://capture-area'
+    - type: llm-rubric
+      value: |
+        The response must use cleanshot://capture-area with spatial parameters
+        (x, y, width, height — and ideally display) computed from the Ghostty
+        window's frame. It must explain how to obtain that frame from another
+        tool (AppleScript / System Events / Quartz CGWindowList) and account
+        for CleanShot's lower-left coordinate origin when the source bounds
+        use a top-left origin (System Events does). It MUST NOT recommend the
+        macOS native `screencapture` utility as the answer. It MUST NOT
+        suggest cleanshot://capture-window for an unattended workflow,
+        because that command requires the user to hover and click a window.
+
+- description: converts System Events top-left bounds to CleanShot lower-left coords
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      System Events reports my window's frame on the main display as
+      position=(0, 33), size=(1728, 1084). The display is 1728x1117 points.
+      Give me the exact cleanshot://capture-area URL with x/y/width/height
+      filled in, and show the conversion math.
+  assert:
+    - type: regex
+      value: 'x=0[^a-zA-Z0-9]+y=0[^a-zA-Z0-9]+width=1728[^a-zA-Z0-9]+height=1084'
+    - type: llm-rubric
+      value: |
+        The response must show the conversion from System Events' top-left
+        origin to CleanShot's lower-left origin using the formula
+        cs_y = display_height - (top_left_y + height) (or an equivalent
+        derivation), and arrive at x=0, y=0, width=1728, height=1084 because
+        1117 - (33 + 1084) = 0. The width and height are unchanged.
+
+- description: capture-window is interactive — wrong tool for unattended automation
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      Can I use cleanshot://capture-window to capture a specific window with
+      no user interaction at all (no hover, no click, no key press)?
+  assert:
+    - type: llm-rubric
+      value: |
+        Response must say no. cleanshot://capture-window enters a window-
+        selection mode where the user has to hover and click the window to
+        capture it. For fully unattended capture of a known window, the
+        response should redirect to cleanshot://capture-area with explicit
+        x/y/width/height parameters (4.7+), with the bounds obtained from
+        another macOS API (AppleScript / System Events / Quartz CGWindowList).
+
+- description: URL has no return value — must inspect save folder or clipboard
+  vars:
+    skillDir: cleanshotx
+    userPrompt: |
+      I just fired `open "cleanshot://capture-area?x=0&y=0&width=800&height=600&action=save"`.
+      In a shell script, how do I get the absolute path of the file CleanShot
+      just wrote? Be specific.
+  assert:
+    - type: llm-rubric
+      value: |
+        Response must explain that the cleanshot:// URL itself returns no
+        path — the `open` command exits as soon as it hands off to
+        LaunchServices. It must point the user at the configured save
+        folder (CleanShot ▸ Settings ▸ Screenshots ▸ "Save to") and show a
+        concrete way to find the newest file there (e.g. `ls -t | head -n1`,
+        `find <save-dir> -newer <marker>`, fswatch, or polling). It may also
+        note that switching to action=copy or action=upload puts the image
+        or URL on the clipboard for `pbpaste`. It must NOT claim that `open`
+        prints the path or that the URL produces one synchronously.
