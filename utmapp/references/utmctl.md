@@ -105,6 +105,29 @@ utmctl start [-a | --attach] [--disposable] [--recovery] <identifier>
 
 `start` resumes a suspended VM as well as cold-starting a stopped one.
 
+**Cosmetic `OSStatus error -2700 / Operation not available` on Apple-backend VMs.**
+On Apple Virtualization VMs (especially freshly duplicated macOS guests) `utmctl start` frequently exits non-zero with:
+
+```
+Error from event: The operation couldn't be completed. (OSStatus error -2700.)
+Operation not available.
+```
+
+The VM still transitions to `started`. The cause is in `UTMScriptingVirtualMachineImpl.start` (UTM source `Scripting/UTMScriptingVirtualMachineImpl.swift:112`): the scripting bridge calls `data.run(vm:startImmediately:false)` to attach a window controller, then re-reads `vm.state` and throws `operationNotAvailable` whenever the state has already left `.stopped` / `.paused`. The race is reliable enough to look like a hard failure but the underlying `data.run` already kicked off the start.
+
+Handle it by checking the VM state, not the utmctl exit code:
+
+```bash
+utmctl start "macOS-test" || true
+case "$(utmctl status "macOS-test")" in
+  starting|started) ;;                         # actually fine, continue
+  stopped|paused)   echo "real start failure" >&2; exit 1 ;;
+  *)                echo "unexpected state" >&2; exit 1 ;;
+esac
+```
+
+Do NOT retry the start (the VM is already starting), recreate the VM, or treat the stderr text as authoritative. The same `-2700` code with the *different* message `Operation not supported by the backend.` IS a real failure — see [ip-address](#ip-address), [exec](#exec), and the troubleshooting reference. Disambiguate by the trailing message line.
+
 ## suspend
 
 ```

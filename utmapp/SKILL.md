@@ -36,6 +36,10 @@ For end-user workflows (installing Linux, Windows, macOS guests; networking; fil
 - **`exec`, `file`, and `ip-address` need the QEMU guest agent.** Install `qemu-guest-agent` in Linux (`apt install qemu-guest-agent && systemctl enable --now qemu-guest-agent`) or `virtio-win` Guest Tools on Windows. Without it these commands time out or return "no agent".
 - **Never `utmctl clone` a macOS guest.** `utmctl clone` is a bundle deep-copy: the duplicate keeps the original's `AuxiliaryStorage` and `HardwareModel`, so two VMs end up sharing one Apple machine identity. The clone may still boot, but iCloud / Apple ID / FaceTime / activation will misbehave on one or both copies, and `AuxiliaryStorage` cannot be regenerated without a fresh restore. For macOS guests use AppleScript `duplicate` instead — it regenerates the auxiliary blob. Linux/Windows/QEMU guests are safe to `utmctl clone`. See the macOS-clone recipe below and [references/workflows.md](references/workflows.md#installing-macos-as-a-guest).
 - **Always name clones/duplicates with a unique identifier.** Append a timestamp or date — `macOS-test-2026-05-08`, `ubuntu-base-clone-20260508-1530`, `<base>-<purpose>-<YYYYMMDD>` — never just `-test` or `-clone`. UTM allows duplicate names, so two `<base> Clone` VMs will silently collide in scripts that resolve by name; a unique identifier also makes it obvious which copy to delete later.
+- **`OSStatus error -2700` from utmctl is overloaded — disambiguate by command and trailing line, then check `utmctl status`.** -2700 is the generic AppleScript "event failed" code. UTM emits it for two very different conditions, distinguished by the trailing message:
+  - `Operation not available.` — usually **cosmetic** on `utmctl start` against an Apple-backend VM (especially a freshly duplicated macOS guest). The scripting bridge races its own state check against `data.run()`, so it raises after the VM has already begun starting. The VM still transitions to `started`. Verify with `utmctl status "<vm>"` (or `utmctl list`) — if status is `starting` or `started`, treat the error as noise and continue. Do not retry the start or recreate the VM.
+  - `Operation not supported by the backend.` — **real failure**. The Apple Virtualization backend genuinely cannot service the request (e.g. `utmctl exec`, `utmctl file pull/push`, `utmctl ip-address`, or `--disposable` start). No retry will help; use the documented alternative (SSH, ARP/mDNS, QEMU backend).
+  Treat `utmctl status` — not utmctl's exit code or stderr text — as the source of truth for whether the requested transition happened.
 - **Bridged networking + macOS Sequoia** require granting UTM the "Local Network" privacy permission, otherwise the guest gets no IP.
 - **JIT on iOS** is a separate world — see [references/troubleshooting.md](references/troubleshooting.md) (UTM SE, AltStore, jailbreak workarounds). All scripting in this skill is **macOS only**.
 
@@ -161,10 +165,10 @@ Before duplicating, confirm the source VM is on the Apple backend and is fully s
 
 ## Wait-until-ready recipe
 
-`utmctl start` returns once the backend has launched, **not** when the guest is booted. To wait until the guest is reachable, poll either status or — better — the guest agent:
+`utmctl start` returns once the backend has launched, **not** when the guest is booted. It may also print a cosmetic `OSStatus error -2700 / Operation not available` on Apple-backend VMs (see Gotchas) — check `utmctl status` rather than the exit code. To wait until the guest is reachable, poll either status or — better — the guest agent:
 
 ```bash
-utmctl start "Ubuntu"
+utmctl start "Ubuntu" || true   # ignore cosmetic -2700; verify via status below
 for i in $(seq 1 60); do
     if utmctl ip-address "Ubuntu" 2>/dev/null | grep -qE '^[0-9]+\.'; then
         echo "Guest up after ${i}s"; break
