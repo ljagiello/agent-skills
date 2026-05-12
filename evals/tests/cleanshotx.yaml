@@ -323,7 +323,7 @@
 # whatever happened to be on top of the screen at capture time landed in
 # the file (e.g. Slack obscuring the agent's terminal).
 
-- description: "this window" resolves the frontmost app, not a hardcoded terminal name
+- description: '"this window" resolves the frontmost app, not a hardcoded terminal name'
   vars:
     skillDir: cleanshotx
     userPrompt: |

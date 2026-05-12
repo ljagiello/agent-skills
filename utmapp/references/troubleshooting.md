@@ -39,6 +39,14 @@ Correct — the flag exists but the implementation is incomplete. Read the seria
 **Symptom: `utmctl exec` returns immediately with no output.**
 Likely capturing was off in the underlying call (utmctl sets it on by default, but if you build a custom AppleScript skip this), or the guest command exited before output flushed. Add explicit redirection: `utmctl exec "$vm" -- /bin/sh -c 'cmd 2>&1'`.
 
+**Symptom: `utmctl start` prints `OSStatus error -2700 / Operation not available` against an Apple-backend VM, but `utmctl status` says `started`.**
+Cosmetic. `OSStatus -2700` is the generic AppleScript "event failed" envelope; the real meaning is in the trailing message and the resulting VM state. `UTMScriptingVirtualMachineImpl.start` first attaches a window controller (`data.run(vm:startImmediately:false)`) and then re-reads `vm.state` — on Apple-backend VMs the state has often already left `.stopped`, so the bridge throws `operationNotAvailable` even though the start succeeded.
+
+Do **not** retry the start, delete the VM, or treat the non-zero exit code as authoritative. Verify with `utmctl status "<vm>"`; if it returns `starting` or `started`, continue. Same pattern when scripting `start` via AppleScript directly.
+
+**Symptom: `utmctl exec` / `utmctl file` / `utmctl ip-address` prints `OSStatus error -2700 / Operation not supported by the backend`.**
+Real failure — and it will keep failing. This is the *other* `-2700` variant: the Apple Virtualization backend has no QEMU guest agent, so these commands have nothing to talk to. Pivot to SSH (`exec`, `file`) or ARP/mDNS on `bridge100` (`ip-address`). See [SKILL.md → Finding a guest's IP](../SKILL.md#finding-a-guests-ip). The two `-2700` cases are distinguished only by the trailing message line — always read it.
+
 ## Guest agent (exec/file/ip-address) failures
 
 **Symptom: `query ip` returns empty list, or exec hangs.**

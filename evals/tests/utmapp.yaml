@@ -178,3 +178,60 @@
         A bare `arp -a` with no scoping MUST fail this rubric — that returns
         every neighbor on every interface, which is what we are trying to
         avoid.
+
+- description: utmctl start OSStatus -2700 is cosmetic — verify with status, do not retry
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      I just duplicated a macOS guest VM with AppleScript and ran:
+
+          /Applications/UTM.app/Contents/MacOS/utmctl start "macOS-test-20260512-0042"
+
+      utmctl printed:
+
+          Error from event: The operation couldn't be completed. (OSStatus error -2700.)
+          Operation not available.
+
+      Did the start fail? What should I do next? Be specific about the
+      command to run.
+  assert:
+    - type: llm-rubric
+      value: |
+        Response MUST explain that this `-2700 / Operation not available`
+        from `utmctl start` on an Apple-backend VM is a known cosmetic
+        AppleScript-bridge error and the VM very likely transitioned to
+        `started` anyway. It MUST instruct the user to verify by running
+        `utmctl status "<vm>"` (or `utmctl list`) and proceed if the
+        status is `starting` or `started`. It MUST NOT recommend retrying
+        `utmctl start`, deleting/recreating the VM, "fixing" the
+        duplicate, reinstalling UTM, or treating the exit code as a hard
+        failure. Mentioning that the same `-2700` code on `utmctl exec`
+        / `utmctl ip-address` is genuinely fatal (Apple backend has no
+        QEMU guest agent) is acceptable but not required.
+
+- description: OSStatus -2700 is overloaded — disambiguate by command and trailing message
+  vars:
+    skillDir: utmapp
+    userPrompt: |
+      utmctl keeps printing "OSStatus error -2700" against my Apple-backend
+      macOS guest, but for different commands. Sometimes the VM still works
+      after, sometimes nothing happens. How do I tell whether a -2700 is
+      cosmetic or a real failure? What signal should I check?
+  assert:
+    - type: llm-rubric
+      value: |
+        Response MUST explain that OSStatus -2700 is the generic
+        AppleScript "event failed" envelope and the meaning is carried
+        by (a) the trailing message line and (b) the command that
+        produced it. It MUST give the user a concrete rule:
+          - `utmctl start` + "Operation not available" on Apple backend
+            → usually COSMETIC; verify VM state with `utmctl status`,
+            proceed if `starting`/`started`.
+          - `utmctl exec` / `utmctl file` / `utmctl ip-address` +
+            "Operation not supported by the backend" on Apple backend
+            → REAL; there is no QEMU guest agent on Apple
+            Virtualization. Use SSH / ARP / mDNS instead.
+        It MUST tell the user to check `utmctl status` (or `utmctl list`)
+        as the source of truth, not the utmctl exit code or the error
+        text alone. It MUST NOT claim every -2700 is harmless, nor that
+        every -2700 is fatal.
